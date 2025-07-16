@@ -30,10 +30,8 @@ Before you begin, ensure you have the following installed:
 
 1.  **Clone the repository:**
     ```bash
-    cd ThaiOutfitTryOn
-    ```
-    ```bash
     git clone https://github.com/dargoroo/ThaiOutfitTryOn.git
+    cd ThaiOutfitTryOn
     ```
     
 2.  **Install required Python packages:**
