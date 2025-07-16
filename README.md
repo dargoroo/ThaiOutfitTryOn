@@ -30,10 +30,12 @@ Before you begin, ensure you have the following installed:
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/dargoroo/ThaiOutfitTryOn.git](https://github.com/dargoroo/ThaiOutfitTryOn.git)
     cd ThaiOutfitTryOn
     ```
-
+    ```bash
+    git clone https://github.com/dargoroo/ThaiOutfitTryOn.git
+    ```
+    
 2.  **Install required Python packages:**
     ```bash
     pip install opencv-python mediapipe numpy tk
