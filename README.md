@@ -1,6 +1,6 @@
 # 🇹🇭 Thai+Chinese Outfit Try-On App
 
-A real-time virtual try-on application using computer vision (MediaPipe Pose and OpenCV) to overlay traditional Thai outfits and cartoon characters onto a user's live webcam feed.
+A real-time virtual try-on application using computer vision (MediaPipe Pose and OpenCV) to overlay traditional Thai outfits, Chinese outfits, and cartoon characters onto a user's live webcam feed.
 
 ## 🚀 Getting Started
 
@@ -38,4 +38,4 @@ A real-time virtual try-on application using computer vision (MediaPipe Pose and
     python main.py
     ```
 
-> **Note:** The application includes pre-loaded outfit assets in the `Thai_outfit` and `img` directories.
+> **Note:** The application includes pre-loaded outfit assets in the `Thai_outfit`, `chinese_outfit`, and `img` directories.
