@@ -1,4 +1,4 @@
-# 🇹🇭 Thai Outfit Try-On App
+# 🇹🇭 Thai+Chinese Outfit Try-On App
 
 A real-time virtual try-on application using computer vision (MediaPipe Pose and OpenCV) to overlay traditional Thai outfits and cartoon characters onto a user's live webcam feed.
 
