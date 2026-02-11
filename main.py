@@ -17,12 +17,30 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose()
 
-# Outfit directory
-OUTFIT_DIR = 'Thai_outfit'
-MALE_OUTFIT_PREFIX = 'thai_outfit_1_'
-FEMALE_OUTFIT_PREFIX = 'thai_outfit_2_'
-NUM_MALE_OUTFITS = 10
-NUM_FEMALE_OUTFITS = 10
+# Outfit Configuration
+OUTFIT_CONFIGS = [
+    {
+        "name": "Thai Male",
+        "directory": "Thai_outfit",
+        "prefix": "thai_outfit_1_",
+        "count": 10,
+        "width_factor": 1.7 # Default for Thai Male
+    },
+    {
+        "name": "Thai Female",
+        "directory": "Thai_outfit",
+        "prefix": "thai_outfit_2_",
+        "count": 10,
+        "width_factor": 1.7 # Default for Thai Female
+    },
+    {
+        "name": "Chinese",
+        "directory": "chinese_outfit",
+        "prefix": "", # No prefix for chinese outfits (1.png, 2.png...)
+        "count": 10,
+        "width_factor": 2.4 # Increased width for Chinese Hanfu
+    }
+]
 
 # Cartoon directory
 CARTOON_DIR = 'img'
@@ -96,37 +114,39 @@ def overlay_image(background, overlay, x, y, width, height, alpha_blend=True):
     return background
 
 
-def load_outfits(shared_outfit_images, shared_male_outfits, shared_female_outfits):
-    # Load male outfits
-    for i in range(1, NUM_MALE_OUTFITS + 1):
-        outfit_path = os.path.join(OUTFIT_DIR, f'{MALE_OUTFIT_PREFIX}{i}.png')
-        print(f"Attempting to load male outfit: {outfit_path}")
-        outfit = cv2.imread(outfit_path, cv2.IMREAD_UNCHANGED)
-        if outfit is not None:
-            print(f"Loaded: {outfit_path}")
-            shared_male_outfits.append(outfit)
-        else:
-            print(f"Failed to load: {outfit_path}")
+def load_outfits(shared_outfit_collections, manager):
+    for config in OUTFIT_CONFIGS:
+        category_name = config["name"]
+        directory = config["directory"]
+        prefix = config["prefix"]
+        count = config["count"]
+        
+        # Create a managed list for this category
+        category_images = manager.list()
+        
+        print(f"Loading {category_name} outfits from {directory}...")
+        
+        for i in range(1, count + 1):
+            if prefix:
+                filename = f"{prefix}{i}.png"
+            else:
+                filename = f"{i}.png"
+                
+            outfit_path = os.path.join(directory, filename)
+            # print(f"Attempting to load: {outfit_path}")
+            outfit = cv2.imread(outfit_path, cv2.IMREAD_UNCHANGED)
+            
+            if outfit is not None:
+                # print(f"Loaded: {outfit_path}")
+                category_images.append(outfit)
+            else:
+                print(f"Failed to load: {outfit_path}")
+        
+        shared_outfit_collections[category_name] = category_images
+        print(f"Loaded {len(category_images)} outfits for {category_name}")
 
-    # Load female outfits
-    for i in range(1, NUM_FEMALE_OUTFITS + 1):
-        outfit_path = os.path.join(OUTFIT_DIR, f'{FEMALE_OUTFIT_PREFIX}{i}.png')
-        print(f"Attempting to load female outfit: {outfit_path}")
-        outfit = cv2.imread(outfit_path, cv2.IMREAD_UNCHANGED)
-        if outfit is not None:
-            print(f"Loaded: {outfit_path}")
-            shared_female_outfits.append(outfit)
-        else:
-            print(f"Failed to load: {outfit_path}")
-    
-    # Initialize shared_outfit_images with a default set (e.g., male outfits)
-    if shared_male_outfits:
-        shared_outfit_images.extend(shared_male_outfits)
-    elif shared_female_outfits:
-        shared_outfit_images.extend(shared_female_outfits)
-
-    if not shared_outfit_images:
-        print("Error: No outfits loaded. Ensure the 'Thai_outfit/' folder and files exist.")
+    if not shared_outfit_collections:
+        print("Error: No outfit collections loaded.")
 
 
 def load_cartoon_images(shared_cartoon_images):
@@ -158,7 +178,8 @@ def process_video(shared_outfit_images, outfit_index, x_offset, y_offset, global
                   cartoon_x_offset, cartoon_y_offset, cartoon_scale, # cartoon_drag_mode REMOVED
                   current_frame_width_proxy, current_frame_height_proxy,
                   display_video_width, display_video_height,
-                  display_control_width):
+                  display_control_width, current_category,
+                  fullscreen_state):
     
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -204,7 +225,9 @@ def process_video(shared_outfit_images, outfit_index, x_offset, y_offset, global
     #     'current_frame_height': current_frame_height_proxy,
     # }
     
-    cv2.namedWindow("Thai Outfit Try-On") # Removed cv2.WINDOW_NORMAL
+    cv2.namedWindow("Thai Outfit Try-On", cv2.WINDOW_NORMAL) # Enable resizing
+    
+    is_fullscreen = False # Track fullscreen state
     # cv2.resizeWindow("Thai Outfit Try-On", display_video_width.value, display_video_height.value) # REMOVED
     # cv2.setMouseCallback("Thai Outfit Try-On", mouse_callback, mouse_callback_params) # REMOVED
 
@@ -277,6 +300,12 @@ def process_video(shared_outfit_images, outfit_index, x_offset, y_offset, global
                 outfit_aspect_ratio = original_outfit_width / original_outfit_height
 
                 outfit_shoulder_to_arm_factor = 1.7 
+                
+                # Dynamic width factor based on category
+                for config in OUTFIT_CONFIGS:
+                    if config["name"] == current_category.value:
+                        outfit_shoulder_to_arm_factor = config.get("width_factor", 1.7)
+                        break
 
                 desired_width = int(shoulder_width * outfit_shoulder_to_arm_factor)
                 
@@ -351,21 +380,40 @@ def process_video(shared_outfit_images, outfit_index, x_offset, y_offset, global
             pass
 
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             break
+        
+        # Check shared fullscreen state
+        if fullscreen_state.value != is_fullscreen:
+            is_fullscreen = fullscreen_state.value
+            if is_fullscreen:
+                cv2.setWindowProperty("Thai Outfit Try-On", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            else:
+                cv2.setWindowProperty("Thai Outfit Try-On", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+
+        # Optional: Allow 'f' key to also toggle shared state (and ESC to exit)
+        if key == ord('f'):
+             fullscreen_state.value = not fullscreen_state.value
+        elif key == 27: # ESC key
+             fullscreen_state.value = False
 
     cap.release()
     cv2.destroyAllWindows()
 
-def run_app(shared_outfit_images, shared_male_outfits, shared_female_outfits, outfit_index, x_offset, y_offset, global_width_adjust, size_multiplier,
-            shared_frame_buffer, alpha_blend_mode, current_gender_mode, frame_dims,
+def run_app(shared_outfit_images, shared_outfit_collections, outfit_index, x_offset, y_offset, global_width_adjust, size_multiplier,
+            shared_frame_buffer, alpha_blend_mode, current_category, frame_dims,
             shared_cartoon_images, show_cartoon, selected_cartoon_type, selected_cartoon_char,
             cartoon_x_offset, cartoon_y_offset, cartoon_scale, # cartoon_drag_mode REMOVED
-            display_control_width, display_video_width, display_video_height):
+            display_control_width, display_video_width, display_video_height,
+            fullscreen_state):
 
     root = tk.Tk()
     root.title("Thai Outfit Try-On")
     root.geometry(f"{display_control_width.value}x1000+0+0") # ใช้ค่าจากตัวแปร
+    
+    # Keep the control panel on top of other windows (including full screen video)
+    root.attributes('-topmost', True)
 
     desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
 
@@ -393,21 +441,14 @@ def run_app(shared_outfit_images, shared_male_outfits, shared_female_outfits, ou
         else:
             print("Cannot capture frame: Webcam not initialized or frame dimensions unknown.")
 
-    def switch_gender_male():
-        current_gender_mode.set("male")
-        shared_outfit_images[:] = []
-        shared_outfit_images.extend(shared_male_outfits)
-        outfit_index.set(0)
-
-    def switch_gender_female():
-        current_gender_mode.set("female")
-        # Ensure shared_gender_mode is also set if it exists in your actual code
-        # If 'shared_gender_mode' is a typo and should be 'current_gender_mode', use that.
-        # Assuming it's meant to be current_gender_mode:
-        # current_gender_mode.set("female")
-        shared_outfit_images[:] = []
-        shared_outfit_images.extend(shared_female_outfits)
-        outfit_index.set(0)
+    def switch_outfit_category(event=None):
+        selected_category = category_combobox.get()
+        if selected_category in shared_outfit_collections:
+            current_category.set(selected_category)
+            shared_outfit_images[:] = []
+            shared_outfit_images.extend(shared_outfit_collections[selected_category])
+            outfit_index.set(0)
+            print(f"Switched to category: {selected_category}")
 
     def toggle_alpha_blend():
         alpha_blend_mode.set(not alpha_blend_mode.value)
@@ -474,9 +515,13 @@ def run_app(shared_outfit_images, shared_male_outfits, shared_female_outfits, ou
     ttk.Button(control_frame, text="Previous Outfit", command=lambda: outfit_index.set((outfit_index.get() - 1) % len(shared_outfit_images))).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
     ttk.Button(control_frame, text="Next Outfit", command=lambda: outfit_index.set((outfit_index.get() + 1) % len(shared_outfit_images))).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
-    ttk.Label(control_frame, text="Gender Selection", font=("Helvetica", 12, "bold")).grid(row=2, column=0, columnspan=2, pady=5)
-    ttk.Button(control_frame, text="Show Male Outfits", command=switch_gender_male).grid(row=3, column=0, padx=5, pady=5, sticky="ew")
-    ttk.Button(control_frame, text="Show Female Outfits", command=switch_gender_female).grid(row=3, column=1, padx=5, pady=5, sticky="ew")
+    ttk.Label(control_frame, text="Outfit Category", font=("Helvetica", 12, "bold")).grid(row=2, column=0, columnspan=2, pady=5)
+    
+    category_names = [config["name"] for config in OUTFIT_CONFIGS]
+    category_combobox = ttk.Combobox(control_frame, values=category_names, state="readonly")
+    category_combobox.set(current_category.value)
+    category_combobox.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+    category_combobox.bind("<<ComboboxSelected>>", switch_outfit_category)
 
     ttk.Label(control_frame, text="Adjust Outfit X Position", font=("Helvetica", 10)).grid(row=4, column=0, columnspan=2, pady=2)
     ttk.Button(control_frame, text="Left (-)", command=lambda: x_offset.set(x_offset.get() - 5)).grid(row=5, column=0, padx=5, pady=2, sticky="ew")
@@ -499,38 +544,63 @@ def run_app(shared_outfit_images, shared_male_outfits, shared_female_outfits, ou
     blend_button = ttk.Button(control_frame, text=f"Alpha Blend: {'ON' if alpha_blend_mode.value else 'OFF'}", command=toggle_alpha_blend)
     blend_button.grid(row=13, column=0, columnspan=2, padx=5, pady=10, sticky="ew")
 
-    # --- Cartoon Controls ---
-    ttk.Separator(control_frame, orient="horizontal").grid(row=14, column=0, columnspan=3, sticky="ew", pady=10) # Adjusted columnspan
-    ttk.Label(control_frame, text="Cartoon Character Controls", font=("Helvetica", 12, "bold")).grid(row=15, column=0, columnspan=3, pady=5) # Adjusted columnspan
+    def toggle_fullscreen_ui():
+        fullscreen_state.value = not fullscreen_state.value
 
-    cartoon_toggle_button = ttk.Button(control_frame, text=f"Cartoon: {'ON' if show_cartoon.value else 'OFF'}", command=toggle_cartoon)
-    cartoon_toggle_button.grid(row=16, column=0, columnspan=3, padx=5, pady=5, sticky="ew") # Adjusted columnspan
+    fullscreen_button = ttk.Button(control_frame, text="Toggle Full Screen", command=toggle_fullscreen_ui)
+    fullscreen_button.grid(row=14, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
 
-    ttk.Label(control_frame, text="Select Cartoon Type:", font=("Helvetica", 10)).grid(row=17, column=0, sticky="w", pady=2)
+    # --- Cartoon Controls (Collapsible) ---
+    ttk.Separator(control_frame, orient="horizontal").grid(row=15, column=0, columnspan=3, sticky="ew", pady=10)
+
+    # Frame to hold the cartoon controls (initially hidden)
+    cartoon_frame = ttk.Frame(control_frame)
+    cartoon_frame.grid(row=16, column=0, columnspan=3, sticky="ew")
+    cartoon_frame.grid_remove() # Hide initially
+
+    def toggle_cartoon_controls():
+        if cartoon_frame.winfo_viewable():
+            cartoon_frame.grid_remove()
+            cartoon_header_btn.config(text="Cartoon Controls [▼]")
+        else:
+            cartoon_frame.grid()
+            cartoon_header_btn.config(text="Cartoon Controls [▲]")
+
+    # Header Button to toggle visibility
+    cartoon_header_btn = ttk.Button(control_frame, text="Cartoon Controls [▼]", command=toggle_cartoon_controls)
+    cartoon_header_btn.grid(row=15, column=0, columnspan=3, pady=5, sticky="ew", padx=5)
+
+    # Move all cartoon widgets into cartoon_frame
+    cartoon_toggle_button = ttk.Button(cartoon_frame, text=f"Cartoon: {'ON' if show_cartoon.value else 'OFF'}", command=toggle_cartoon)
+    cartoon_toggle_button.grid(row=0, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
+
+    ttk.Label(cartoon_frame, text="Select Cartoon Type:", font=("Helvetica", 10)).grid(row=1, column=0, sticky="w", pady=2)
     cartoon_types = ["พระอภัยมณี", "พระอภัยมณีและนางเงือก", "นางเงือก", "นางยักษ์", "สินสมุทร", "สุดสาคร"]
-    cartoon_type_combobox = ttk.Combobox(control_frame, values=cartoon_types, state="readonly")
+    cartoon_type_combobox = ttk.Combobox(cartoon_frame, values=cartoon_types, state="readonly")
     cartoon_type_combobox.set(cartoon_types[selected_cartoon_type.value])
-    cartoon_type_combobox.grid(row=17, column=1, padx=5, pady=2, sticky="ew", columnspan=2) # Adjusted columnspan
+    cartoon_type_combobox.grid(row=1, column=1, padx=5, pady=2, sticky="ew", columnspan=2)
     cartoon_type_combobox.bind("<<ComboboxSelected>>", update_cartoon_type)
 
-    ttk.Label(control_frame, text="Change Character:", font=("Helvetica", 10)).grid(row=18, column=0, sticky="w", pady=2) # Adjusted column to 0
-    ttk.Button(control_frame, text="Previous Char", command=prev_cartoon_char).grid(row=18, column=1, padx=5, pady=2, sticky="ew") # Adjusted row, column
-    ttk.Button(control_frame, text="Next Char", command=next_cartoon_char).grid(row=18, column=2, padx=5, pady=2, sticky="ew") # Adjusted row, column
+    ttk.Label(cartoon_frame, text="Change Character:", font=("Helvetica", 10)).grid(row=2, column=0, sticky="w", pady=2)
+    ttk.Button(cartoon_frame, text="Previous Char", command=prev_cartoon_char).grid(row=2, column=1, padx=5, pady=2, sticky="ew")
+    ttk.Button(cartoon_frame, text="Next Char", command=next_cartoon_char).grid(row=2, column=2, padx=5, pady=2, sticky="ew")
 
-    # --- Cartoon X Offset Buttons --- (RE-ADDED)
-    ttk.Label(control_frame, text="Cartoon X Offset:", font=("Helvetica", 10)).grid(row=19, column=0, sticky="w", pady=2)
-    ttk.Button(control_frame, text="Left (-50)", command=lambda: cartoon_x_offset.set(cartoon_x_offset.get() - 50)).grid(row=19, column=1, padx=5, pady=2, sticky="ew")
-    ttk.Button(control_frame, text="Right (+50)", command=lambda: cartoon_x_offset.set(cartoon_x_offset.get() + 50)).grid(row=19, column=2, padx=5, pady=2, sticky="ew")
+    ttk.Label(cartoon_frame, text="Cartoon X Offset:", font=("Helvetica", 10)).grid(row=3, column=0, sticky="w", pady=2)
+    ttk.Button(cartoon_frame, text="Left (-50)", command=lambda: cartoon_x_offset.set(cartoon_x_offset.get() - 50)).grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+    ttk.Button(cartoon_frame, text="Right (+50)", command=lambda: cartoon_x_offset.set(cartoon_x_offset.get() + 50)).grid(row=3, column=2, padx=5, pady=2, sticky="ew")
 
-    # --- Cartoon Y Offset Buttons --- (RE-ADDED)
-    ttk.Label(control_frame, text="Cartoon Y Offset:", font=("Helvetica", 10)).grid(row=20, column=0, sticky="w", pady=2)
-    ttk.Button(control_frame, text="Up (-50)", command=lambda: cartoon_y_offset.set(cartoon_y_offset.get() - 50)).grid(row=20, column=1, padx=5, pady=2, sticky="ew")
-    ttk.Button(control_frame, text="Down (+50)", command=lambda: cartoon_y_offset.set(cartoon_y_offset.get() + 50)).grid(row=20, column=2, padx=5, pady=2, sticky="ew")
+    ttk.Label(cartoon_frame, text="Cartoon Y Offset:", font=("Helvetica", 10)).grid(row=4, column=0, sticky="w", pady=2)
+    ttk.Button(cartoon_frame, text="Up (-50)", command=lambda: cartoon_y_offset.set(cartoon_y_offset.get() - 50)).grid(row=4, column=1, padx=5, pady=2, sticky="ew")
+    ttk.Button(cartoon_frame, text="Down (+50)", command=lambda: cartoon_y_offset.set(cartoon_y_offset.get() + 50)).grid(row=4, column=2, padx=5, pady=2, sticky="ew")
 
-    # --- Cartoon Scale Buttons (Adjusted row numbers) ---
-    ttk.Label(control_frame, text="Cartoon Scale:", font=("Helvetica", 10)).grid(row=21, column=0, sticky="w", pady=2)
-    ttk.Button(control_frame, text="Decrease Scale", command=lambda: cartoon_scale.set(max(0.1, cartoon_scale.get() - 0.05))).grid(row=21, column=1, padx=5, pady=2, sticky="ew")
-    ttk.Button(control_frame, text="Increase Scale", command=lambda: cartoon_scale.set(cartoon_scale.get() + 0.05)).grid(row=21, column=2, padx=5, pady=2, sticky="ew")
+    ttk.Label(cartoon_frame, text="Cartoon Scale:", font=("Helvetica", 10)).grid(row=5, column=0, sticky="w", pady=2)
+    ttk.Button(cartoon_frame, text="Decrease Scale", command=lambda: cartoon_scale.set(max(0.1, cartoon_scale.get() - 0.05))).grid(row=5, column=1, padx=5, pady=2, sticky="ew")
+    ttk.Button(cartoon_frame, text="Increase Scale", command=lambda: cartoon_scale.set(cartoon_scale.get() + 0.05)).grid(row=5, column=2, padx=5, pady=2, sticky="ew")
+    
+    # Configure grid weights for cartoon_frame
+    cartoon_frame.grid_columnconfigure(0, weight=1)
+    cartoon_frame.grid_columnconfigure(1, weight=1)
+    cartoon_frame.grid_columnconfigure(2, weight=1)
 
     # Capture Button
     capture_button = tk.Button(
@@ -561,8 +631,7 @@ if __name__ == "__main__":
 
     manager = multiprocessing.Manager()
     shared_outfit_images = manager.list()
-    shared_male_outfits = manager.list()
-    shared_female_outfits = manager.list()
+    shared_outfit_collections = manager.dict()
 
     frame_dims = manager.Array('i', [0, 0, 0]) # [height, width, channels]
 
@@ -585,7 +654,10 @@ if __name__ == "__main__":
     global_width_adjust = manager.Value('d', 1.0)
     size_multiplier = manager.Value('d', 1.0)
     alpha_blend_mode = manager.Value('b', True)
-    current_gender_mode = manager.Value('str', 'male')
+    
+    # Default category
+    default_category_name = OUTFIT_CONFIGS[0]["name"]
+    current_category = manager.Value('str', default_category_name)
 
     # --- Cartoon specific shared variables ---
     shared_cartoon_images = manager.list() # Nested list: [type][char]
@@ -608,16 +680,17 @@ if __name__ == "__main__":
     display_video_width = manager.Value('i', initial_frame_w)
     display_video_height = manager.Value('i', initial_frame_h)
 
+    # --- Fullscreen State ---
+    fullscreen_state = manager.Value('b', False)
+
     # Load images
-    load_outfits(shared_outfit_images, shared_male_outfits, shared_female_outfits)
+    load_outfits(shared_outfit_collections, manager)
     load_cartoon_images(shared_cartoon_images)
 
-    if shared_male_outfits:
-        shared_outfit_images.extend(shared_male_outfits)
-        current_gender_mode.set("male")
-    elif shared_female_outfits: 
-        shared_outfit_images.extend(shared_female_outfits)
-        current_gender_mode.set("female")
+    # Initialize shared_outfit_images with default category
+    if default_category_name in shared_outfit_collections:
+        shared_outfit_images.extend(shared_outfit_collections[default_category_name])
+        current_category.set(default_category_name)
 
     video_process = multiprocessing.Process(
         target=process_video,
@@ -627,14 +700,20 @@ if __name__ == "__main__":
               cartoon_x_offset, cartoon_y_offset, cartoon_scale, # cartoon_drag_mode REMOVED
               current_frame_width_proxy, current_frame_height_proxy,
               display_video_width, display_video_height,
-              display_control_width)
+              display_control_width, current_category,
+              fullscreen_state)
     )
     video_process.start()
 
-    run_app(shared_outfit_images, shared_male_outfits, shared_female_outfits, outfit_index, x_offset, y_offset, global_width_adjust, size_multiplier,
-            shared_frame_buffer, alpha_blend_mode, current_gender_mode, frame_dims,
-            shared_cartoon_images, show_cartoon, selected_cartoon_type, selected_cartoon_char,
-            cartoon_x_offset, cartoon_y_offset, cartoon_scale, # cartoon_drag_mode REMOVED
-            display_control_width, display_video_width, display_video_height)
-
-    video_process.join()
+    try:
+        run_app(shared_outfit_images, shared_outfit_collections, outfit_index, x_offset, y_offset, global_width_adjust, size_multiplier,
+                shared_frame_buffer, alpha_blend_mode, current_category, frame_dims,
+                shared_cartoon_images, show_cartoon, selected_cartoon_type, selected_cartoon_char,
+                cartoon_x_offset, cartoon_y_offset, cartoon_scale, # cartoon_drag_mode REMOVED
+                display_control_width, display_video_width, display_video_height,
+                fullscreen_state)
+    finally:
+        print("Terminating video process...")
+        video_process.terminate()
+        video_process.join()
+        print("Video process terminated.")
