@@ -16,6 +16,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # Initialize MediaPipe Pose
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose()
+mp_selfie = mp.solutions.selfie_segmentation
+selfie_segmentation = mp_selfie.SelfieSegmentation(model_selection=1) # 1 for landscape/better quality
 
 # Outfit Configuration
 OUTFIT_CONFIGS = [
@@ -39,6 +41,20 @@ OUTFIT_CONFIGS = [
         "prefix": "", # No prefix for chinese outfits (1.png, 2.png...)
         "count": 10,
         "width_factor": 2.4 # Increased width for Chinese Hanfu
+    },
+    {
+        "name": "Thai Period Male",
+        "directory": "Thai_period_dress",
+        "prefix": "1-", # Men's outfits
+        "count": 10,
+        "width_factor": 1.7
+    },
+    {
+        "name": "Thai Period Female",
+        "directory": "Thai_period_dress",
+        "prefix": "2-", # Women's outfits
+        "count": 10,
+        "width_factor": 1.7
     }
 ]
 
@@ -46,6 +62,7 @@ OUTFIT_CONFIGS = [
 CARTOON_DIR = 'img'
 NUM_CARTOON_TYPES = 6 # 0-5
 NUM_CHARS_PER_TYPE = 10 # 0-9
+BACKGROUND_DIR = 'background'
 
 # Global variables for mouse dragging in process_video (REMOVED)
 
@@ -60,7 +77,7 @@ def overlay_image(background, overlay, x, y, width, height, alpha_blend=True):
     try:
         overlay_resized = cv2.resize(overlay, (width, height), interpolation=cv2.INTER_LINEAR)
     except cv2.error as e:
-        print(f"Resize failed with width={width}, height={height}: {e}")
+        #print(f"Resize failed with width={width}, height={height}: {e}")
         return background
 
     h_resized, w_resized, _ = overlay_resized.shape
@@ -170,6 +187,23 @@ def load_cartoon_images(shared_cartoon_images):
         print("Error: No cartoon images loaded. Ensure the 'img/' folder and files exist.")
 
 
+def load_background_images(shared_bg_images):
+    print(f"Loading background images from: {BACKGROUND_DIR}")
+    if not __import__('os').path.exists(BACKGROUND_DIR):
+        print(f"Warning: directory '{BACKGROUND_DIR}' does not exist.")
+        return
+    for filename in __import__('os').listdir(BACKGROUND_DIR):
+        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            bg_path = __import__('os').path.join(BACKGROUND_DIR, filename)
+            bg = cv2.imread(bg_path)
+            if bg is not None:
+                shared_bg_images.append(bg)
+    if not shared_bg_images:
+        print(f"Warning: No valid background images loaded from {BACKGROUND_DIR}.")
+    else:
+        print(f"Loaded {len(shared_bg_images)} background images.")
+
+
 # Mouse callback function for OpenCV window (REMOVED as drag-and-drop is removed)
 
 def process_video(shared_outfit_images, outfit_index, x_offset, y_offset, global_width_adjust, size_multiplier,
@@ -179,7 +213,7 @@ def process_video(shared_outfit_images, outfit_index, x_offset, y_offset, global
                   current_frame_width_proxy, current_frame_height_proxy,
                   display_video_width, display_video_height,
                   display_control_width, current_category,
-                  fullscreen_state):
+                  fullscreen_state, shared_bg_images, show_bg, bg_index, current_fps):
     
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -228,6 +262,10 @@ def process_video(shared_outfit_images, outfit_index, x_offset, y_offset, global
     cv2.namedWindow("Thai Outfit Try-On", cv2.WINDOW_NORMAL) # Enable resizing
     
     is_fullscreen = False # Track fullscreen state
+
+    # FPS calculation variables
+    prev_time = __import__('time').time()
+    fps_filter = 0.0
     # cv2.resizeWindow("Thai Outfit Try-On", display_video_width.value, display_video_height.value) # REMOVED
     # cv2.setMouseCallback("Thai Outfit Try-On", mouse_callback, mouse_callback_params) # REMOVED
 
@@ -246,6 +284,29 @@ def process_video(shared_outfit_images, outfit_index, x_offset, y_offset, global
 
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = pose.process(rgb_frame)
+
+        # --- Background Replacement ---
+        if show_bg.value and shared_bg_images:
+            try:
+                current_bg = shared_bg_images[bg_index.value]
+                seg_results = selfie_segmentation.process(rgb_frame)
+                if seg_results.segmentation_mask is not None:
+                    current_bg_resized = cv2.resize(current_bg, (current_frame_w, current_frame_h))
+                    
+                    # เลเบลความทึบแสงของโมเดล 0.0 - 1.0 (ทำ Soft Blending)
+                    mask = seg_results.segmentation_mask
+                    
+                    # ปรับเบลอมาร์สให้เนียนขึ้นได้
+                    mask = cv2.GaussianBlur(mask, (7, 7), 0)
+                    
+                    # ขยายมิติให้กว้าง 3 channel (RGB)
+                    alpha = __import__('numpy').stack((mask,) * 3, axis=-1)
+                    
+                    # เกลี่ยความชัด (Foreground x Alpha) + (Background x (1 - Alpha))
+                    frame = (frame * alpha + current_bg_resized * (1 - alpha)).astype(__import__('numpy').uint8)
+            except IndexError:
+                print("IndexError: Background index out of range. Resetting to 0.")
+                bg_index.value = 0
 
         # --- Outfit Rendering ---
         if shared_outfit_images: # Only attempt if outfits are loaded
@@ -361,6 +422,14 @@ def process_video(shared_outfit_images, outfit_index, x_offset, y_offset, global
                 show_cartoon.set(False) # Turn off cartoon to prevent repeated errors
 
 
+        # Calculate FPS
+        curr_time = __import__('time').time()
+        fps = 1.0 / (curr_time - prev_time) if (curr_time - prev_time) > 0 else 0.0
+        prev_time = curr_time
+        # Exponential moving average for smoother FPS display
+        fps_filter = 0.9 * fps_filter + 0.1 * fps
+        current_fps.value = fps_filter
+
         cv2.imshow("Thai Outfit Try-On", frame)
         
         # Move the OpenCV window only once after it's created
@@ -406,14 +475,18 @@ def run_app(shared_outfit_images, shared_outfit_collections, outfit_index, x_off
             shared_cartoon_images, show_cartoon, selected_cartoon_type, selected_cartoon_char,
             cartoon_x_offset, cartoon_y_offset, cartoon_scale, # cartoon_drag_mode REMOVED
             display_control_width, display_video_width, display_video_height,
-            fullscreen_state):
+            fullscreen_state, shared_bg_images, show_bg, bg_index, current_fps):
 
     root = tk.Tk()
     root.title("Thai Outfit Try-On")
     root.geometry(f"{display_control_width.value}x1000+0+0") # ใช้ค่าจากตัวแปร
+
+    def update_fps_label():
+        fps_label.config(text=f"FPS: {current_fps.value:.1f}")
+        root.after(500, update_fps_label)
     
     # Keep the control panel on top of other windows (including full screen video)
-    root.attributes('-topmost', True)
+    #root.attributes('-topmost', True)
 
     desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
 
@@ -512,8 +585,8 @@ def run_app(shared_outfit_images, shared_outfit_collections, outfit_index, x_off
 
     # Outfit Controls (remain unchanged)
     ttk.Label(control_frame, text="Outfit Navigation", font=("Helvetica", 12, "bold")).grid(row=0, column=0, columnspan=2, pady=5)
-    ttk.Button(control_frame, text="Previous Outfit", command=lambda: outfit_index.set((outfit_index.get() - 1) % len(shared_outfit_images))).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-    ttk.Button(control_frame, text="Next Outfit", command=lambda: outfit_index.set((outfit_index.get() + 1) % len(shared_outfit_images))).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+    ttk.Button(control_frame, text="Previous Outfit", command=lambda: outfit_index.set((outfit_index.get() - 1) % len(shared_outfit_images)) if len(shared_outfit_images) > 0 else None).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+    ttk.Button(control_frame, text="Next Outfit", command=lambda: outfit_index.set((outfit_index.get() + 1) % len(shared_outfit_images)) if len(shared_outfit_images) > 0 else None).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
     ttk.Label(control_frame, text="Outfit Category", font=("Helvetica", 12, "bold")).grid(row=2, column=0, columnspan=2, pady=5)
     
@@ -602,6 +675,33 @@ def run_app(shared_outfit_images, shared_outfit_collections, outfit_index, x_off
     cartoon_frame.grid_columnconfigure(1, weight=1)
     cartoon_frame.grid_columnconfigure(2, weight=1)
 
+    # --- Background Controls ---
+    ttk.Separator(control_frame, orient="horizontal").grid(row=17, column=0, columnspan=3, sticky="ew", pady=10)
+    
+    bg_frame = ttk.Frame(control_frame)
+    bg_frame.grid(row=18, column=0, columnspan=3, sticky="ew")
+
+    def toggle_bg():
+        show_bg.set(not show_bg.value)
+        bg_toggle_btn.config(text=f"Background: {'ON' if show_bg.value else 'OFF'}")
+
+    def next_bg():
+        if shared_bg_images:
+            bg_index.set((bg_index.get() + 1) % len(shared_bg_images))
+
+    def prev_bg():
+        if shared_bg_images:
+            bg_index.set((bg_index.get() - 1) % len(shared_bg_images))
+
+    bg_toggle_btn = ttk.Button(bg_frame, text=f"Background: {'ON' if show_bg.value else 'OFF'}", command=toggle_bg)
+    bg_toggle_btn.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+    
+    ttk.Button(bg_frame, text="Prev BG", command=prev_bg).grid(row=1, column=0, padx=5, pady=2, sticky="ew")
+    ttk.Button(bg_frame, text="Next BG", command=next_bg).grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+    
+    bg_frame.grid_columnconfigure(0, weight=1)
+    bg_frame.grid_columnconfigure(1, weight=1)
+
     # Capture Button
     capture_button = tk.Button(
         root,
@@ -616,6 +716,12 @@ def run_app(shared_outfit_images, shared_outfit_collections, outfit_index, x_off
         width=25
     )
     capture_button.pack(pady=20, fill="x", padx=10)
+
+    # FPS Display
+    fps_label = tk.Label(root, text="FPS: 0.0", font=("Helvetica", 10), fg="gray")
+    fps_label.pack(side="bottom", anchor="w", padx=5, pady=5)
+    
+    update_fps_label()
 
     # Adjust grid column configuration as we now consistently have 3 columns
     control_frame.grid_columnconfigure(0, weight=1)
@@ -683,9 +789,19 @@ if __name__ == "__main__":
     # --- Fullscreen State ---
     fullscreen_state = manager.Value('b', False)
 
+    # --- Background ---
+    shared_bg_images = manager.list()
+    show_bg = manager.Value('b', False)
+    bg_index = manager.Value('i', 0)
+
+    # --- FPS Tracker ---
+    current_fps = manager.Value('d', 0.0)
+
     # Load images
     load_outfits(shared_outfit_collections, manager)
     load_cartoon_images(shared_cartoon_images)
+    load_background_images(shared_bg_images)
+    load_background_images(shared_bg_images)
 
     # Initialize shared_outfit_images with default category
     if default_category_name in shared_outfit_collections:
@@ -701,7 +817,7 @@ if __name__ == "__main__":
               current_frame_width_proxy, current_frame_height_proxy,
               display_video_width, display_video_height,
               display_control_width, current_category,
-              fullscreen_state)
+              fullscreen_state, shared_bg_images, show_bg, bg_index, current_fps)
     )
     video_process.start()
 
@@ -711,7 +827,7 @@ if __name__ == "__main__":
                 shared_cartoon_images, show_cartoon, selected_cartoon_type, selected_cartoon_char,
                 cartoon_x_offset, cartoon_y_offset, cartoon_scale, # cartoon_drag_mode REMOVED
                 display_control_width, display_video_width, display_video_height,
-                fullscreen_state)
+                fullscreen_state, shared_bg_images, show_bg, bg_index, current_fps)
     finally:
         print("Terminating video process...")
         video_process.terminate()
