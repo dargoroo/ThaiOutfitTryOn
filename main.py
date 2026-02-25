@@ -17,7 +17,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose()
 mp_selfie = mp.solutions.selfie_segmentation
-selfie_segmentation = mp_selfie.SelfieSegmentation(model_selection=1) # 1 for landscape/better quality
+selfie_segmentation = mp_selfie.SelfieSegmentation(model_selection=1) # 1 for landscape/better qualityyyy
 
 # Outfit Configuration
 OUTFIT_CONFIGS = [
